@@ -1,47 +1,44 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from decouple import config
-
+from typing import List, Dict
 
 app = FastAPI()
 
-# Path to your credentials JSON file
-
-SERVICE_ACCOUNT_FILE = config('SERVICE_ACCOUNT_FILE')
-
-# Scopes for Google Sheets API
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-
-# Spreadsheet ID and Range
 SPREADSHEET_ID = config('SPREADSHEET_ID')
-# Adjust the range as per your sheet
-RANGE_NAME = f"{config('SHEET_NAME')}!A:Z"
+SERVICE_ACCOUNT_FILE = config('SERVICE_ACCOUNT_FILE')
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 
 credentials = Credentials.from_service_account_file(
     SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build('sheets', 'v4', credentials=credentials)
 
 
-@app.get("/get-data/{column}/{value}")
-async def get_data(column: str, value: str):
+@app.post("/get-data")
+async def get_data(filters: Dict[str, List[str]] = Body(...)):
     try:
-        # Call the Sheets API to get the data
         sheet = service.spreadsheets()
-        result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()
+        result = sheet.values().get(spreadsheetId=SPREADSHEET_ID,
+                                    range=config('SHEET_NAME')).execute()
         rows = result.get('values', [])
 
         if not rows:
             raise HTTPException(status_code=404, detail="No data found")
 
-        # Find the index of the specified column
         header = rows[0]
-        if column not in header:
-            raise HTTPException(status_code=404, detail="Column not found")
+        filtered_data = rows[1:]  # Exclude the header
 
-        col_index = header.index(column)
-        filtered_data = [row for row in rows if len(
-            row) > col_index and row[col_index] == value]
+        # Apply filtering based on each column and its values
+        for column, values in filters.items():
+            if column not in header:
+                raise HTTPException(status_code=404, detail=f"Column '{
+                                    column}' not found")
+            col_index = header.index(column)
+            filtered_data = [
+                row for row in filtered_data
+                if len(row) > col_index and row[col_index] in values
+            ]
 
         if not filtered_data:
             raise HTTPException(
